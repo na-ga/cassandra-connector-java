@@ -124,16 +124,14 @@ public abstract class Metadata extends MetadataEntity {
 
     @JsonIgnore
     public Iterator<Map.Entry<Partitioner.Token, InetAddress>> getRingIterator(Partitioner.Token start) {
-        synchronized (tokenring) {
-            if (tokenring.isEmpty()) {
-                return EMPTY_RING_ITERATOR;
-            }
-            Partitioner.Token startToken = tokenring.ceilingKey(start);
-            if (startToken == null) {
-                startToken = tokenring.firstKey();
-            }
-            return tokenring.tailMap(startToken).entrySet().iterator();
+        if (tokenring.isEmpty()) {
+            return EMPTY_RING_ITERATOR;
         }
+        Partitioner.Token startToken = tokenring.ceilingKey(start);
+        if (startToken == null) {
+            startToken = tokenring.firstKey();
+        }
+        return tokenring.tailMap(startToken).entrySet().iterator();
     }
 
     @JsonIgnore
