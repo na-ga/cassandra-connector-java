@@ -11,7 +11,6 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.concurrent.Promise;
 
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -244,10 +243,9 @@ public class CassandraSession {
         if (!cluster.isActive()) {
             throw new IllegalStateException("cluster not active");
         }
-        CassandraConnection connection = connections.get(endpoint.getAddress());
+        CassandraConnection connection = connections.get(endpoint);
         if (connection == null) {
-            InetSocketAddress remoteAddress = new InetSocketAddress(endpoint, options().getPort());
-            CassandraConnection newConnection = cluster.driver().newConnection(remoteAddress, options());
+            CassandraConnection newConnection = cluster.driver().newConnection(endpoint, options());
             connection = connections.putIfAbsent(endpoint, newConnection);
             if (connection == null) {
                 connection = newConnection;
@@ -258,7 +256,7 @@ public class CassandraSession {
             }
         }
         if (!connection.isActive()) {
-            connections.remove(endpoint.getAddress());
+            connections.remove(endpoint);
         }
         return connection;
     }
