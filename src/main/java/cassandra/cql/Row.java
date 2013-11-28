@@ -32,7 +32,7 @@ public class Row {
     }
 
     public boolean isNull(int column) {
-        return metadata.getColumn(column) != null || row.get(column) != null;
+        return metadata.getColumn(column) == null || row.get(column) == null;
     }
 
     public boolean getBool(String column) {
