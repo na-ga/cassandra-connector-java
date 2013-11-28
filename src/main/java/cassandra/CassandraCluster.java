@@ -13,6 +13,7 @@ import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -186,6 +187,27 @@ public class CassandraCluster {
         return client.metadata();
     }
 
+    public CassandraCluster addEventListener(EventListener listener) {
+        if (listener == null) {
+            throw new NullPointerException("listener");
+        }
+        client.listeners.add(listener);
+        return this;
+    }
+
+    public CassandraCluster addEventListeners(EventListener... listeners) {
+        if (listeners == null) {
+            throw new NullPointerException("listeners");
+        }
+        for (EventListener listener : listeners) {
+            addEventListener(listener);
+        }
+        return this;
+    }
+
+
+
+
     public void close() {
         client.close();
     }
@@ -211,7 +233,7 @@ public class CassandraCluster {
             session = new CassandraSession(this);
             sessions = newConcurrentHashMap();
             metadata = new MetadataService(CassandraCluster.this);
-            listeners = new ArrayList<EventListener>();
+            listeners = new CopyOnWriteArrayList<EventListener>();
             listeners.add(metadata);
             if (builder.listeners != null) {
                 listeners.addAll(builder.listeners);
