@@ -20,7 +20,7 @@ public class CassandraOptions {
     public static final int DEFALUT_CONNECT_TIMEOUT_MILLIS = 3000;
     public static final int DEFAULT_PAGE_SIZE_LIMIT = 1000;
     public static final Compression DEFAULT_COMPRESSION = Compression.NONE;
-    public static final Consistency DEFAULT_CONSISTENCY = Consistency.QUORUM;
+    public static final Consistency DEFAULT_CONSISTENCY = Consistency.ONE;
     public static final Consistency DEFAULT_SERIAL_CONSISTENCY = Consistency.SERIAL;
 
     private final int port;
