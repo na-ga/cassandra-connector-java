@@ -161,8 +161,6 @@ public class QueryBuilder implements QueryVisitor {
         query.append("DELETE ");
         if (node.hasSelectionClause()) {
             node.selectionClause().accept(this);
-        } else {
-            query.append("*");
         }
         query.append(" FROM ");
         if (node.hasKeyspace()) {

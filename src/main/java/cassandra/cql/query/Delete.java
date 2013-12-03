@@ -44,18 +44,27 @@ public class Delete extends Query<Delete> {
     }
 
     public Delete where(Clause.Equal clause) {
-        if (clause == null) {
-            throw new NullPointerException("clause");
-        }
-        where = clause;
-        return this;
+        return where0(clause);
     }
 
     public Delete where(Clause.In clause) {
+        return where0(clause);
+    }
+
+    private Delete where0(Clause.Operator clause) {
         if (clause == null) {
             throw new NullPointerException("clause");
         }
-        where = clause;
+        if (where == null) {
+            where = clause;
+        } else if (where instanceof Clause.And) {
+            ((Clause.And)where).clauses().add(clause);
+        } else {
+            Clause.And and = new Clause.And();
+            and.clauses().add(where);
+            and.clauses().add(clause);
+            where = and;
+        }
         return this;
     }
 

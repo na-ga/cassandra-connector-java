@@ -204,6 +204,26 @@ public abstract class Query<T extends Query<T>> {
         return new Clause.Using(name, value);
     }
 
+    public static String token(String name) {
+        return String.format("token(%s)", name);
+    }
+
+    public static String token(String... names) {
+        StringBuilder buf = new StringBuilder();
+        buf.append("token(");
+        boolean first = true;
+        for (String name : names) {
+            if (first) {
+                first = false;
+            } else {
+                buf.append(",");
+            }
+            buf.append(name);
+        }
+        buf.append(")");
+        return buf.toString();
+    }
+
     public static Function token(Object value) {
         return func("token", value);
     }
