@@ -76,6 +76,10 @@ public class ResultSet implements Iterator<Row>, Iterable<Row> {
         return lastTrace;
     }
 
+    public Row one() {
+        return next();
+    }
+
     public List<Row> asList() {
         List<Row> list = new ArrayList<Row>(rows.size());
         for (Row row : this) {
