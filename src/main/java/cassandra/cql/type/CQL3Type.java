@@ -328,7 +328,7 @@ public class CQL3Type { // TODO refactor this
         @Override
         public String decode(ByteBuffer buffer) {
             try {
-                return CharsetUtil.getDecoder(charset).decode(buffer).toString();
+                return CharsetUtil.getDecoder(charset).decode(buffer.duplicate()).toString();
             } catch (CharacterCodingException e) {
                 throw new IllegalArgumentException(e);
             }
