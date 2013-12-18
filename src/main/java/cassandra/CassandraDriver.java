@@ -145,13 +145,13 @@ public class CassandraDriver {
         return GLOBAL_EVENT_EXECUTOR.get();
     }
 
-    public static boolean setGlobalEventExecutor(int nThread) {
-        return setGlobalEventExecutor(nThread, "cassandra-eventexecutor");
+    public static boolean setGlobalEventExecutor(int nThreads) {
+        return setGlobalEventExecutor(nThreads, "cassandra-eventexecutor");
     }
 
-    public static boolean setGlobalEventExecutor(int nThread, String name) {
-        if (nThread < 1) {
-            throw new IllegalArgumentException(String.format("nThread: %d (expected: >= 1)", nThread));
+    public static boolean setGlobalEventExecutor(int nThreads, String name) {
+        if (nThreads < 1) {
+            throw new IllegalArgumentException(String.format("nThreads: %d (expected: >= 1)", nThreads));
         }
         if (name == null) {
             throw new NullPointerException("name");
@@ -159,7 +159,7 @@ public class CassandraDriver {
         if (name.isEmpty()) {
             throw new IllegalArgumentException("empty name");
         }
-        return setGlobalEventExecutor(new DefaultEventExecutorGroup(nThread, new DefaultThreadFactory(name)));
+        return setGlobalEventExecutor(new DefaultEventExecutorGroup(nThreads, new DefaultThreadFactory(name)));
     }
 
     public static boolean setGlobalEventExecutor(EventExecutorGroup globalEventExecutor) {
