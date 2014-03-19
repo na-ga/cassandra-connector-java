@@ -1,5 +1,8 @@
 package cassandra.retry;
 
+import java.net.ConnectException;
+import java.nio.channels.ClosedChannelException;
+
 import cassandra.CassandraException;
 import cassandra.cql.WriteType;
 
@@ -11,6 +14,12 @@ public class ErrorCodeAwareRetryPolicy implements RetryPolicy {
     public boolean canRetry(RetryContext context) {
         Throwable cause = context.getLastThrowable();
         if (cause == null) {
+            return true;
+        }
+        if (cause instanceof ConnectException) {
+            return true;
+        }
+        if (cause instanceof ClosedChannelException) {
             return true;
         }
         if (cause instanceof CassandraException) {
