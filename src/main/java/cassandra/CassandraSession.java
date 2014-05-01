@@ -7,8 +7,9 @@ import cassandra.metadata.Metadata;
 import cassandra.protocol.CassandraMessage;
 import cassandra.retry.RetryContext;
 import io.netty.util.concurrent.DefaultPromise;
-import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.concurrent.Promise;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
@@ -21,6 +22,8 @@ import java.util.concurrent.ConcurrentMap;
 import static io.netty.util.internal.PlatformDependent.newConcurrentHashMap;
 
 public class CassandraSession {
+
+    private static final Logger logger = LoggerFactory.getLogger(CassandraSession.class);
 
     private final CassandraCluster.Client cluster;
     private final String keyspace;
@@ -78,7 +81,15 @@ public class CassandraSession {
             parameterMetadata = new RowMetadata(prepared.metadata.columns);
         }
         PreparedStatement pstmt = new PreparedStatement(this, prepared.statementId, query, metadata, parameterMetadata);
-        return cluster.registerPreparedQuery(connection(context.getCurrentEndpoint()), pstmt);
+        if (cluster.preparedStatementMap().putIfAbsent(prepared.statementId, pstmt) == null) {
+            for (CassandraConnection connection : connections.values()) {
+                if (connection.remoteAddress().getAddress().equals(context.getCurrentEndpoint())) {
+                    continue;
+                }
+                connection.send(new CassandraMessage.Prepare(pstmt.getQuery()));
+            }
+        }
+        return pstmt;
     }
 
     public ResultSet execute(Query query) {
@@ -236,7 +247,7 @@ public class CassandraSession {
         return future;
     }
 
-    private CassandraConnection connection(InetAddress endpoint) {
+    CassandraConnection connection(InetAddress endpoint) {
         if (endpoint == null) {
             throw new NullPointerException("endpoint");
         }
@@ -244,19 +255,34 @@ public class CassandraSession {
             throw new IllegalStateException("cluster not active");
         }
         CassandraConnection connection = connections.get(endpoint);
-        if (connection == null) {
-            CassandraConnection newConnection = cluster.driver().newConnection(endpoint, options());
-            connection = connections.putIfAbsent(endpoint, newConnection);
-            if (connection == null) {
-                connection = newConnection;
+        if (connection != null) {
+            if (connection.isActive()) {
+                return connection;
             }
-            connection.open(cluster);
-            if (!isGlobal()) {
-                connection.keyspace(keyspace);
+            if (System.currentTimeMillis() - connection.createdAt() >= options().getConnectTimeoutMillis()) {
+                connections.remove(endpoint);
             }
         }
-        if (!connection.isActive()) {
-            connections.remove(endpoint);
+        synchronized (this) {
+            connection = connections.get(endpoint);
+            if (connection != null) {
+                if (connection.isActive()) {
+                    return connection;
+                }
+                if (System.currentTimeMillis() - connection.createdAt() > options().getConnectTimeoutMillis()) {
+                    connections.remove(endpoint);
+                }
+            }
+            connection = cluster.driver().newConnection(endpoint, options());
+            connection.open(cluster);
+            if (connection.use(keyspace)) {
+                for (PreparedStatement pstmt : cluster.preparedStatementMap().values()) {
+                    if (pstmt.getKeyspace().equals(keyspace)) {
+                        connection.send(new CassandraMessage.Prepare(pstmt.getQuery()));
+                    }
+                }
+            }
+            connections.putIfAbsent(endpoint, connection);
         }
         return connection;
     }
@@ -268,7 +294,7 @@ public class CassandraSession {
         private final Promise<CassandraMessage.Result> promise;
 
         ResultFuture(CassandraSession session, RetryContext context) {
-            this(session, context, new DefaultPromise<CassandraMessage.Result>(GlobalEventExecutor.INSTANCE));
+            this(session, context, new DefaultPromise<CassandraMessage.Result>(CassandraDriver.getGlobalEventExecutor().next()));
         }
 
         ResultFuture(CassandraSession session, RetryContext context, Promise<CassandraMessage.Result> promise) {
@@ -295,6 +321,51 @@ public class CassandraSession {
 
         @Override
         public void completed(final CassandraFuture future) throws Exception {
+            if (logger.isTraceEnabled()) {
+                String query;
+                CassandraMessage.Type type = future.request().getType();
+                switch (type) {
+                    case BATCH:
+                        CassandraMessage.Batch batch = (CassandraMessage.Batch)future.request();
+                        StringBuilder buf = new StringBuilder("BEGIN ").append(batch.getType()).append(" BATCH ");
+                        for (CassandraMessage.Batch.QueryValue v : batch.queries) {
+                            if (v.stringOrId instanceof PreparedStatement.StatementId) {
+                                PreparedStatement.StatementId id = (PreparedStatement.StatementId)v.stringOrId;
+                                PreparedStatement pstmt = cluster.preparedStatementMap().get(id);
+                                if (pstmt != null) {
+                                    buf.append(pstmt.getQuery());
+                                } else {
+                                    buf.append("unprepared");
+                                }
+                            } else {
+                                buf.append(v.stringOrId);
+                            }
+                            buf.append(";");
+                        }
+                        buf.append("APPLY BATCH;");
+                        query = buf.toString();
+                        break;
+                    case EXECUTE:
+                        PreparedStatement pstmt = cluster.preparedStatementMap().get(((CassandraMessage.Execute)future.request()).statementId);
+                        if (pstmt != null) {
+                            query = pstmt.getQuery();
+                        } else {
+                            query = "unprepared";
+                        }
+                        break;
+                    case PREPARE:
+                        query = ((CassandraMessage.Prepare)future.request()).query;
+                        break;
+                    case QUERY:
+                        query = ((CassandraMessage.Query)future.request()).query;
+                        break;
+                    default:
+                        query = "";
+                        break;
+                }
+                logger.trace("[{}(success={}, retry={}) => {}] {}", type, future.isSuccess(), context.getRetryCount(), context.getCurrentEndpoint(), query);
+            }
+
             if (future.isSuccess()) {
                 promise.trySuccess((CassandraMessage.Result)future.get());
             } else {
@@ -302,9 +373,9 @@ public class CassandraSession {
                 context.setFailure(cause);
                 if (cause instanceof CassandraException.Unprepared) {
                     CassandraException.Unprepared unprepared = (CassandraException.Unprepared)cause;
-                    String query = cluster.findPreparedQuery(new PreparedStatement.StatementId(unprepared.id));
-                    if (query != null) {
-                        future.connection().send(new CassandraMessage.Prepare(query)).addListener(new CassandraFuture.Listener() {
+                    PreparedStatement pstmt = cluster.preparedStatementMap().get(new PreparedStatement.StatementId(unprepared.id));
+                    if (pstmt != null) {
+                        future.connection().send(new CassandraMessage.Prepare(pstmt.getQuery())).addListener(new CassandraFuture.Listener() {
                             @Override
                             public void completed(CassandraFuture f) throws Exception {
                                 if (f.isSuccess()) {

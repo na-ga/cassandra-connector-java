@@ -6,7 +6,7 @@
 
     <groupId>cassandra</groupId>
     <artifactId>cassandra-connector-java</artifactId>
-    <version>1.0.0.Beta2</version>
+    <version>1.0.0.Beta3</version>
     <packaging>jar</packaging>
 
     <description>
@@ -121,12 +121,17 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>4.0.13.Final</version>
+            <version>4.0.19.Final</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.2.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.googlecode.concurrentlinkedhashmap</groupId>
+            <artifactId>concurrentlinkedhashmap-lru</artifactId>
+            <version>1.4</version>
         </dependency>
         <dependency>
             <groupId>com.codahale.metrics</groupId>

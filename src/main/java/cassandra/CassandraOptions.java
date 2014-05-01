@@ -19,17 +19,19 @@ public class CassandraOptions {
     public static final int DEFALUT_PORT = 9042;
     public static final int DEFALUT_CONNECT_TIMEOUT_MILLIS = 3000;
     public static final int DEFAULT_PAGE_SIZE_LIMIT = 1000;
+    public static final int DEFAULT_PREPARED_STATEMENT_CACHE_SIZE = 1000;
     public static final Compression DEFAULT_COMPRESSION = Compression.NONE;
     public static final Consistency DEFAULT_CONSISTENCY = Consistency.ONE;
     public static final Consistency DEFAULT_SERIAL_CONSISTENCY = Consistency.SERIAL;
 
     private final int port;
     private final int connectTimeoutMillis;
+    private final int pageSizeLimit;
+    private final int preparedStatementCacheSize;
     private final AuthProvider authProvider;
     private final SSLContext sslContext;
     private final String[] cipherSuites;
     private final Compression compression;
-    private final int pageSizeLimit;
     private final RoutingPolicy routingPolicy;
     private final RetryPolicy retryPolicy;
     private final Consistency consistency, serialConsistency;
@@ -39,6 +41,7 @@ public class CassandraOptions {
         protected Integer port;
         protected Integer connectTimeoutMillis;
         protected Integer pageSizeLimit;
+        protected Integer preparedStatementCacheSize;
         protected AuthProvider authProvider;
         protected SSLContext sslContext;
         protected String[] cipherSuites;
@@ -69,6 +72,18 @@ public class CassandraOptions {
                 throw new IllegalArgumentException(String.format("connectTimeoutMillis: %d (expected: > 0)", connectTimeoutMillis));
             }
             this.connectTimeoutMillis = connectTimeoutMillis;
+            return this;
+        }
+
+        public boolean hasPreparedStatementCacheSize() {
+            return preparedStatementCacheSize != null;
+        }
+
+        public Builder setPreparedStatementCacheSize(int preparedStatementCacheSize) {
+            if (pageSizeLimit <= 0) {
+                throw new IllegalArgumentException(String.format("preparedStatementCacheSize: %d (expected: > 0)", preparedStatementCacheSize));
+            }
+            this.preparedStatementCacheSize = preparedStatementCacheSize;
             return this;
         }
 
@@ -169,6 +184,9 @@ public class CassandraOptions {
             if (!hasPageSizeLimit()) {
                 pageSizeLimit = builder.pageSizeLimit;
             }
+            if (!hasPreparedStatementCacheSize()) {
+                preparedStatementCacheSize = builder.preparedStatementCacheSize;
+            }
             if (!hasAuthProvider()) {
                 authProvider = builder.authProvider;
             }
@@ -203,6 +221,9 @@ public class CassandraOptions {
             }
             if (!hasPageSizeLimit()) {
                 pageSizeLimit = options.pageSizeLimit;
+            }
+            if (!hasPreparedStatementCacheSize()) {
+                preparedStatementCacheSize = options.preparedStatementCacheSize;
             }
             if (!hasAuthProvider()) {
                 authProvider = options.authProvider;
@@ -239,6 +260,9 @@ public class CassandraOptions {
             if (!hasPageSizeLimit()) {
                 pageSizeLimit = DEFAULT_PAGE_SIZE_LIMIT;
             }
+            if (!hasPreparedStatementCacheSize()) {
+                preparedStatementCacheSize = DEFAULT_PREPARED_STATEMENT_CACHE_SIZE;
+            }
             if (!hasAuthProvider()) {
                 authProvider = AuthProvider.NULL_PROVIDER;
             }
@@ -269,6 +293,7 @@ public class CassandraOptions {
         port = builder.port;
         connectTimeoutMillis = builder.connectTimeoutMillis;
         pageSizeLimit = builder.pageSizeLimit;
+        preparedStatementCacheSize = builder.preparedStatementCacheSize;
         authProvider = builder.authProvider;
         sslContext = builder.sslContext;
         cipherSuites = builder.cipherSuites;
@@ -287,6 +312,14 @@ public class CassandraOptions {
         return connectTimeoutMillis;
     }
 
+    public int getPageSizeLimit() {
+        return pageSizeLimit;
+    }
+
+    public int getPreparedStatementCacheSize() {
+        return preparedStatementCacheSize;
+    }
+
     public AuthProvider getAuthProvider() {
         return authProvider;
     }
@@ -301,10 +334,6 @@ public class CassandraOptions {
 
     public Compression getCompression() {
         return compression;
-    }
-
-    public int getPageSizeLimit() {
-        return pageSizeLimit;
     }
 
     public RoutingPolicy getRoutingPolicy() {

@@ -15,8 +15,8 @@ import java.net.InetSocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.NotYetConnectedException;
 import java.util.*;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static cassandra.CassandraDriver.CQL_VERSION;
 
@@ -81,8 +81,9 @@ public class CassandraConnection {
     private final InetSocketAddress remoteAddress;
     private final Initializer initializer;
     private final AtomicBoolean started, registered, closed;
-    private final AtomicReference<String> keyspace;
+    private final long createdAt;
     private StateListener listener;
+    private String keyspace;
 
     CassandraConnection(CassandraOptions options, CassandraFutureMap futureMap, Channel channel, InetSocketAddress remoteAddress) {
         this.options = options;
@@ -93,7 +94,7 @@ public class CassandraConnection {
         started = new AtomicBoolean();
         registered = new AtomicBoolean();
         closed = new AtomicBoolean();
-        keyspace = new AtomicReference<String>(null);
+        createdAt = System.currentTimeMillis();
     }
 
     public CassandraOptions options() {
@@ -136,6 +137,9 @@ public class CassandraConnection {
                         @Override
                         public void operationComplete(ChannelFuture future) throws Exception {
                             if (future.isSuccess()) {
+
+                                //
+
                                 initializer.run();
                             } else {
                                 initializer.fail(future.cause());
@@ -157,9 +161,16 @@ public class CassandraConnection {
             throw new NotYetConnectedException();
         }
         CassandraFuture future = newFuture(request);
-        if (!initializer.startupFuture.await().isSuccess()) {
-            future.setFailure(initializer.startupFuture.cause());
-            return future;
+        if (!initializer.startupFuture.isDone()) {
+            long timeout = options.getConnectTimeoutMillis() - (System.currentTimeMillis() - createdAt);
+            if (!initializer.startupFuture.await(Math.max(timeout, 1))) {
+                future.setFailure(new TimeoutException(String.format("connect timeout: %s", remoteAddress)));
+                return future;
+            }
+            if (!initializer.startupFuture.isSuccess()) {
+                future.setFailure(initializer.startupFuture.cause());
+                return future;
+            }
         }
         if (!channel.isActive()) {
             future.setFailure(new ClosedChannelException());
@@ -172,18 +183,15 @@ public class CassandraConnection {
     }
 
     public String keyspace() {
-        return keyspace.get();
+        return keyspace;
     }
 
-    public boolean keyspace(String keyspace) {
-        if (keyspace == null) {
-            throw new NullPointerException("keyspace");
+    public boolean use(String keyspace) {
+        if (keyspace == null || keyspace.isEmpty()) {
+            return false;
         }
-        if (keyspace.isEmpty()) {
-            throw new IllegalArgumentException("empty keyspace");
-        }
-        String old = this.keyspace.get();
-        if (this.keyspace.compareAndSet(old, keyspace)) {
+        if (!keyspace.equals(this.keyspace)) {
+            this.keyspace = keyspace;
             send(new Query("USE " + keyspace, QueryParameters.DEFAULT)).addListener(CassandraFuture.Listener.CLOSE_ON_FAILURE);
             return true;
         }
@@ -218,14 +226,23 @@ public class CassandraConnection {
         }
     }
 
-    public void handleEvent(Event event) {
+    public void handleEvent(final Event event) {
         if (registered.get()) {
-            listener.onEvent(this, event);
+            CassandraDriver.getGlobalEventExecutor().execute(new Runnable() {
+                @Override
+                public void run() {
+                    listener.onEvent(CassandraConnection.this, event);
+                }
+            });
         }
     }
 
     public void close() {
         channel.close();
+    }
+
+    public long createdAt() {
+        return createdAt;
     }
 
     @Override

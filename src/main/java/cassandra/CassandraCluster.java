@@ -5,6 +5,7 @@ import cassandra.metadata.Metadata;
 import cassandra.metadata.MetadataService;
 import cassandra.metadata.PeerMetadata;
 import cassandra.protocol.CassandraMessage;
+import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -205,9 +206,6 @@ public class CassandraCluster {
         return this;
     }
 
-
-
-
     public void close() {
         client.close();
     }
@@ -222,8 +220,7 @@ public class CassandraCluster {
         private final ConcurrentMap<String, CassandraSession> sessions;
         private final MetadataService metadata;
         private final AtomicReference<CassandraConnection> connection;
-        private final ConcurrentMap<Integer, CassandraConnection> connections;
-        private final ConcurrentMap<PreparedStatement.StatementId, String> pstmts;
+        private final ConcurrentMap<PreparedStatement.StatementId, PreparedStatement> pstmts;
         private final AtomicBoolean active;
 
         private Client(Builder builder) {
@@ -239,8 +236,9 @@ public class CassandraCluster {
                 listeners.addAll(builder.listeners);
             }
             connection = new AtomicReference<CassandraConnection>(null);
-            connections = newConcurrentHashMap();
-            pstmts = newConcurrentHashMap();
+            pstmts = new ConcurrentLinkedHashMap.Builder<PreparedStatement.StatementId, PreparedStatement>()
+                    .maximumWeightedCapacity(options.getPreparedStatementCacheSize())
+                    .build();
             active = new AtomicBoolean();
         }
 
@@ -300,12 +298,11 @@ public class CassandraCluster {
                         fireTopologyChanged(CassandraMessage.Event.TopologyChange.newNode(address));
                     }
                     for (PeerMetadata peer : metadata.getPeers()) {
-                        CassandraConnection tmp = driver.newConnection(peer.getAddress(), options).open(DEFAULT);
-                        tmp.openFuture().await();
-                        if (!tmp.isActive()) {
-                            fireStatusChanged(CassandraMessage.Event.StatusChange.down(tmp.remoteAddress()));
+                        CassandraConnection conn = session.connection(peer.getAddress()).open(this);
+                        conn.openFuture().await();
+                        if (!conn.isActive()) {
+                            fireStatusChanged(CassandraMessage.Event.StatusChange.down(conn.remoteAddress()));
                         }
-                        tmp.close();
                     }
                 }
                 active.set(registered && metadata.isInitialized());
@@ -342,26 +339,13 @@ public class CassandraCluster {
                     return true;
                 }
                 return registerConnection(addresses);
-            } catch (Exception e) {
-                e.printStackTrace();
+            } catch (Exception ignored) {
                 return false;
             }
         }
 
-        public String findPreparedQuery(PreparedStatement.StatementId id) {
-            return pstmts.get(id);
-        }
-
-        public PreparedStatement registerPreparedQuery(CassandraConnection connection, PreparedStatement pstmt) {
-            if (pstmts.putIfAbsent(pstmt.getId(), pstmt.getQuery()) == null) {
-                for (CassandraConnection c : connections.values()) {
-                    if (c.equals(connection)) {
-                        continue;
-                    }
-                    c.send(new CassandraMessage.Prepare(pstmt.getQuery()));
-                }
-            }
-            return pstmt;
+        public ConcurrentMap<PreparedStatement.StatementId, PreparedStatement> preparedStatementMap() {
+            return pstmts;
         }
 
         public void close() {
@@ -378,23 +362,18 @@ public class CassandraCluster {
         @Override
         public void onOpen(CassandraConnection connection) {
             logger.debug("OPEN(cluster={}, address={})", metadata.getClusterName(), connection.remoteAddress());
-            connections.putIfAbsent(connection.hashCode(), connection);
-            for (String query : pstmts.values()) {
-                connection.send(new CassandraMessage.Prepare(query));
-            }
         }
 
         @Override
         public void onOpenFail(CassandraConnection connection, Throwable cause) {
             if (isActive()) {
-                logger.debug("OPEN FAIL(cluster={}, address={}, cause={})", metadata.getClusterName(), connection.remoteAddress(), cause.getMessage(), cause);
+                logger.debug("OPEN FAIL(cluster={}, address={})", metadata.getClusterName(), connection.remoteAddress(), cause);
             }
         }
 
         @Override
         public void onClose(CassandraConnection connection) {
             logger.debug("CLOSE(cluster={}, address={})", metadata.getClusterName(), connection.remoteAddress());
-            connections.remove(connection.hashCode());
         }
 
         @Override
@@ -404,7 +383,7 @@ public class CassandraCluster {
 
         @Override
         public void onRegisterFail(CassandraConnection connection, List<CassandraMessage.Event.Type> events, Throwable cause) {
-            logger.debug("REGISTER FAIL(cluster={}, address={}, cause={})", metadata.getClusterName(), connection.remoteAddress(), cause.getMessage(), cause);
+            logger.debug("REGISTER FAIL(cluster={}, address={})", metadata.getClusterName(), connection.remoteAddress(), cause);
         }
 
         @Override
@@ -418,6 +397,7 @@ public class CassandraCluster {
                         addressSet.add(peer.getAddress());
                     }
                 }
+                addressSet.remove(connection.remoteAddress().getAddress());
                 if (!registerConnection(addressSet.iterator())) {
                     if (isActive()) {
                         logger.error(unavailable.getMessage(), unavailable);
@@ -430,18 +410,23 @@ public class CassandraCluster {
         @Override
         public void onEvent(CassandraConnection connection, CassandraMessage.Event event) {
             logger.debug("EVENT(cluster={}, address={}, event={})", metadata.getClusterName(), connection.remoteAddress(), event);
-            switch (event.type) {
-                case TOPOLOGY_CHANGE:
-                    fireTopologyChanged((CassandraMessage.Event.TopologyChange)event);
-                    break;
-                case STATUS_CHANGE:
-                    fireStatusChanged((CassandraMessage.Event.StatusChange)event);
-                    break;
-                case SCHEMA_CHANGE:
-                    fireSchemaChanged((CassandraMessage.Event.SchemaChange)event);
-                    break;
-                default:
-                    break;
+            try {
+                switch (event.type) {
+                    case TOPOLOGY_CHANGE:
+                        fireTopologyChanged((CassandraMessage.Event.TopologyChange) event);
+                        break;
+                    case STATUS_CHANGE:
+                        fireStatusChanged((CassandraMessage.Event.StatusChange) event);
+                        break;
+                    case SCHEMA_CHANGE:
+                        fireSchemaChanged((CassandraMessage.Event.SchemaChange) event);
+                        break;
+                    default:
+                        break;
+                }
+                logger.debug("DONE HANDLE EVENT {}", event);
+            } catch (Throwable cause) {
+                logger.warn("FAILED HANDLE EVENT (cluster={}, address={}, event={})", metadata.getClusterName(), connection.remoteAddress(), event, cause);
             }
         }
 
